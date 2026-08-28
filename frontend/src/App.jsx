@@ -1,122 +1,155 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import React, { useState, useCallback, useEffect } from "react";
+import SearchBar from "./components/SearchBar";
+import MapView from "./components/MapView";
+import DetailPanel from "./components/DetailPanel";
+import { parseQuery, getParcels } from "./services/api";
+import { validateParcel } from "./utils/mapUtils";
 
-function App() {
-  const [count, setCount] = useState(0)
+// ── App
+// Root component — owns all application state.
+// Orchestrates: SearchBar → api.js → MapView → DetailPanel
+// ─────────────────────────────────────────────────────────────────────────────
 
+export default function App() {
+  const [parcels,        setParcels]        = useState([]);
+  const [selectedParcel, setSelectedParcel] = useState(null);
+  const [loading,        setLoading]        = useState(false);
+  const [error,          setError]          = useState(null);
+  const [searched,       setSearched]       = useState(false);
+  const [sortValue,      setSortValue]      = useState("viability_desc");
+
+  const [activeLayers, setActiveLayers] = useState({
+    floodZones:       false,
+    powerSubstations: false,
+    highways:         false,
+    industrialZones:  false,
+  });
+
+  // ── Auto-load on mount ─────────────────────────────────────────────────────
+  // Silently loads mock parcels on startup so the map opens populated.
+  // This does not run a full search — just seeds the initial view.
+  useEffect(() => {
+    (async () => {
+      try {
+        const results = await getParcels({});
+        if (Array.isArray(results)) setParcels(results);
+      } catch (_) {
+        // Silent fail — user can still search manually
+      }
+    })();
+  }, []);
+
+  // ── Search handler ─────────────────────────────────────────────────────────
+  const handleSearch = useCallback(async (query) => {
+    if (!query || !query.trim()) return;
+
+    setLoading(true);
+    setError(null);
+    setSelectedParcel(null);
+    // Preserve previous parcels while loading so map isn't blank
+
+    try {
+      const parsedQ  = await parseQuery(query);
+      const results  = await getParcels(parsedQ);
+
+      if (!Array.isArray(results)) {
+        throw new Error("Unexpected response from server.");
+      }
+
+      // Warn about invalid parcels in dev but never crash
+      const invalidCount = results.filter((p) => !validateParcel(p)).length;
+      if (invalidCount > 0 && import.meta.env.DEV) {
+        console.warn(`[MapView] ${invalidCount} parcels failed validation and will not be rendered.`);
+      }
+
+      setParcels(results);
+      setSearched(true);
+    } catch (err) {
+      // Preserve previous results on error
+      setError(
+        err?.response?.data?.message ||
+        err?.message ||
+        "Failed to retrieve parcels. Please try again."
+      );
+      setSearched(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // ── Layer toggle ───────────────────────────────────────────────────────────
+  const handleToggleLayer = useCallback((key) => {
+    setActiveLayers((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
+    <div className="app">
+      {/* ── Header ── */}
+      <header className="app-header">
+        <div className="app-header__logo">
+          <div className="app-header__icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+              <polygon points="8,1 15,5 15,11 8,15 1,11 1,5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <circle cx="8" cy="8" r="2" fill="currentColor" />
+            </svg>
+          </div>
+          <div className="app-header__wordmark">
+            <div className="app-header__title">Industrial Land Intelligence</div>
+            <div className="app-header__subtitle">AI-Driven Acquisition Platform</div>
+          </div>
         </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
 
-      <div className="ticks"></div>
+        <div className="app-header__divider" aria-hidden="true" />
+        <span className="app-header__tag">MVP</span>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+        <div className="app-header__spacer" />
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+        <div className="app-header__status">
+          <span className="app-header__status-dot" aria-hidden="true" />
+          {import.meta.env.VITE_USE_MOCK_DATA === "true" ? "Mock Data" : "Live API"}
+        </div>
+      </header>
+
+      {/* ── Search ── */}
+      <SearchBar
+        onSearch={handleSearch}
+        loading={loading}
+        error={error}
+      />
+
+      {/* ── Workspace ── */}
+      <main className="workspace">
+        <MapView
+          parcels={parcels}
+          selectedParcel={selectedParcel}
+          onParcelSelect={setSelectedParcel}
+          loading={loading}
+          searched={searched}
+          sortValue={sortValue}
+          onSortChange={setSortValue}
+          activeLayers={activeLayers}
+          onToggleLayer={handleToggleLayer}
+        />
+
+        {/* ── Detail Panel (Souradeep's integration point) ── */}
+        <DetailPanel parcel={selectedParcel} />
+      </main>
+
+      {/* ── Footer ── */}
+      <footer className="app-footer">
+        <span className="app-footer__text">
+          © 2025 Industrial Land Intelligence Platform
+        </span>
+        <span className="app-footer__sep" aria-hidden="true" />
+        <span className="app-footer__text">
+          Map: © OpenStreetMap contributors, © CARTO
+        </span>
+        <span className="app-footer__sep" aria-hidden="true" />
+        <span className="app-footer__text">
+          Data sourced via AI-assisted parcel scoring
+        </span>
+      </footer>
+    </div>
+  );
 }
-
-export default App
