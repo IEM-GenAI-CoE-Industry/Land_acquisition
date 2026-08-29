@@ -1,22 +1,23 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import SearchBar from "./components/SearchBar";
 import MapView from "./components/MapView";
 import DetailPanel from "./components/DetailPanel";
-import { parseQuery, getParcels } from "./services/api";
+import { searchParcels } from "./services/api";
 import { validateParcel } from "./utils/mapUtils";
 
 // ── App
 // Root component — owns all application state.
-// Orchestrates: SearchBar → api.js → MapView → DetailPanel
+// Orchestrates: SearchBar → api.js (POST /search) → MapView → DetailPanel
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [parcels,        setParcels]        = useState([]);
-  const [selectedParcel, setSelectedParcel] = useState(null);
-  const [loading,        setLoading]        = useState(false);
-  const [error,          setError]          = useState(null);
-  const [searched,       setSearched]       = useState(false);
-  const [sortValue,      setSortValue]      = useState("viability_desc");
+  const [parcels,          setParcels]          = useState([]);
+  const [selectedParcel,   setSelectedParcel]   = useState(null);
+  const [loading,          setLoading]          = useState(false);
+  const [error,            setError]            = useState(null);
+  const [searched,         setSearched]         = useState(false);
+  const [sortValue,        setSortValue]        = useState("viability_desc");
+  const [queryUnderstood,  setQueryUnderstood]  = useState(null);
 
   const [activeLayers, setActiveLayers] = useState({
     floodZones:       false,
@@ -25,21 +26,8 @@ export default function App() {
     industrialZones:  false,
   });
 
-  // ── Auto-load on mount ─────────────────────────────────────────────────────
-  // Silently loads mock parcels on startup so the map opens populated.
-  // This does not run a full search — just seeds the initial view.
-  useEffect(() => {
-    (async () => {
-      try {
-        const results = await getParcels({});
-        if (Array.isArray(results)) setParcels(results);
-      } catch (_) {
-        // Silent fail — user can still search manually
-      }
-    })();
-  }, []);
-
   // ── Search handler ─────────────────────────────────────────────────────────
+  // Single call to POST /search — backend handles NLP + parcel filtering.
   const handleSearch = useCallback(async (query) => {
     if (!query || !query.trim()) return;
 
@@ -49,8 +37,7 @@ export default function App() {
     // Preserve previous parcels while loading so map isn't blank
 
     try {
-      const parsedQ  = await parseQuery(query);
-      const results  = await getParcels(parsedQ);
+      const { parcels: results, query_understood } = await searchParcels(query);
 
       if (!Array.isArray(results)) {
         throw new Error("Unexpected response from server.");
@@ -59,17 +46,20 @@ export default function App() {
       // Warn about invalid parcels in dev but never crash
       const invalidCount = results.filter((p) => !validateParcel(p)).length;
       if (invalidCount > 0 && import.meta.env.DEV) {
-        console.warn(`[MapView] ${invalidCount} parcels failed validation and will not be rendered.`);
+        console.warn(
+          `[MapView] ${invalidCount} parcels failed validation and will not be rendered.`
+        );
       }
 
       setParcels(results);
+      setQueryUnderstood(query_understood);
       setSearched(true);
     } catch (err) {
       // Preserve previous results on error
       setError(
         err?.response?.data?.message ||
-        err?.message ||
-        "Failed to retrieve parcels. Please try again."
+          err?.message ||
+          "Failed to retrieve parcels. Please try again."
       );
       setSearched(true);
     } finally {
@@ -132,8 +122,11 @@ export default function App() {
           onToggleLayer={handleToggleLayer}
         />
 
-        {/* ── Detail Panel (Souradeep's integration point) ── */}
-        <DetailPanel parcel={selectedParcel} />
+        {/* ── Detail Panel ── */}
+        <DetailPanel
+          parcel={selectedParcel}
+          queryUnderstood={queryUnderstood}
+        />
       </main>
 
       {/* ── Footer ── */}
