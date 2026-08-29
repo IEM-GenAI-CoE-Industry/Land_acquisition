@@ -1083,14 +1083,46 @@ html, body {
   letter-spacing: 0.02em;
 }
 
-.detail-panel__stub-note {
-  margin-top: var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border: 1px dashed var(--border-default);
-  border-radius: var(--radius-md);
-  font-size: var(--text-xs);
-  color: var(--text-disabled);
+/* AI reason callout */
+.detail-panel__reason {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-elevated);
+  border-left: 2px solid var(--status-medium-border);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
   line-height: var(--leading-normal);
+  flex-shrink: 0;
+}
+
+.detail-panel__reason-icon {
+  flex-shrink: 0;
+  font-size: var(--text-base);
+  line-height: 1.4;
+}
+
+/* Red flags list */
+.detail-panel__redflags {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detail-panel__redflag {
+  font-size: var(--text-xs);
+  color: var(--status-low-text);
+  padding: var(--space-2) var(--space-3);
+  background: var(--status-low-bg);
+  border: 1px solid var(--status-low-border);
+  border-radius: var(--radius-sm);
+  line-height: var(--leading-normal);
+}
+
+.detail-panel__redflag::before {
+  content: '⚠ ';
 }
 
 /* ── Loading State ───────────────────────────────────────────────────────────── */

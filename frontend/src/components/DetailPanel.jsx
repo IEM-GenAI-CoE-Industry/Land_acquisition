@@ -4,22 +4,44 @@ import {
   getViabilityLabel,
   formatDistance,
   formatArea,
-  formatTags,
 } from "../utils/mapUtils";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DetailPanel — INTEGRATION POINT FOR SOURADEEP
+// DetailPanel
 //
-// This is a temporary stub. Replace the content of this file with your full
-// detail panel implementation. Do NOT modify App.jsx, MapView.jsx, or state.
-//
-// Props received:
-//   parcel: Parcel | null
-//     The currently selected parcel object, or null if nothing is selected.
-//     The full Parcel schema is documented in src/services/api.js (JSDoc).
+// Props:
+//   parcel: Parcel | null    — selected parcel from API (normalised)
+//   queryUnderstood: object  — query_understood block from API response
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function DetailPanel({ parcel }) {
+// Factor display names & icons
+const FACTOR_META = {
+  power:         { label: "Power Supply",   icon: "⚡" },
+  proximity_poi: { label: "POI Proximity",  icon: "✈" },
+  flood:         { label: "Flood Safety",   icon: "🌊" },
+  zoning:        { label: "Zoning",         icon: "📋" },
+  highway:       { label: "Highway Access", icon: "🛣" },
+  size_fit:      { label: "Size Fit",       icon: "📐" },
+  water:         { label: "Water Access",   icon: "💧" },
+};
+
+function ScoreBar({ points, maxPoints = 35 }) {
+  const pct = Math.max(0, Math.min(100, (points / maxPoints) * 100));
+  const color =
+    pct >= 70 ? "var(--status-high-text)" :
+    pct >= 40 ? "var(--status-medium-text)" :
+                "var(--status-low-text)";
+  return (
+    <div className="detail-panel__breakdown-bar-track">
+      <div
+        className="detail-panel__breakdown-bar-fill"
+        style={{ width: `${pct}%`, background: color }}
+      />
+    </div>
+  );
+}
+
+export default function DetailPanel({ parcel, queryUnderstood }) {
   // ── Empty state ────────────────────────────────────────────────────────────
   if (!parcel) {
     return (
@@ -47,29 +69,33 @@ export default function DetailPanel({ parcel }) {
   const band  = getViabilityBand(parcel.viability_score);
   const label = getViabilityLabel(parcel.viability_score);
 
-  // Score breakdown — handle missing gracefully
-  const breakdown = parcel.score_breakdown || {};
-  const breakdownItems = [
-    { key: "power",     label: "Power Supply",  value: breakdown.power     ?? null },
-    { key: "proximity", label: "Proximity",      value: breakdown.proximity ?? null },
-    { key: "risk",      label: "Risk Profile",   value: breakdown.risk      ?? null },
-  ].filter((item) => item.value !== null);
+  // score_breakdown is an array of {factor, raw_score, weight, points}
+  const breakdown = Array.isArray(parcel.score_breakdown)
+    ? [...parcel.score_breakdown].sort((a, b) => b.points - a.points)
+    : [];
 
-  const maxBreakdownValue = 35; // approximate max per dimension
+  const maxPoints = breakdown.length > 0
+    ? Math.max(...breakdown.map((b) => b.points), 1)
+    : 35;
+
+  const redFlags = Array.isArray(parcel.red_flags) ? parcel.red_flags : [];
+  const hasRedFlags = redFlags.length > 0;
 
   return (
     <aside className="detail-panel" aria-label={`Detail panel for ${parcel.name}`}>
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="detail-panel__header">
         <div className="detail-panel__header-label">Selected Parcel</div>
         <div className="detail-panel__name">{parcel.name}</div>
         <div className="detail-panel__id">{parcel.parcel_id}</div>
       </div>
 
-      {/* Viability score */}
+      {/* ── Viability score ── */}
       <div className="detail-panel__score-band">
         <div className={`detail-panel__score-number detail-panel__score-number--${band}`}>
-          {parcel.viability_score}
+          {typeof parcel.viability_score === "number"
+            ? parcel.viability_score.toFixed(1)
+            : "—"}
         </div>
         <div className="detail-panel__score-meta">
           <div className="detail-panel__score-total">/ 100 Viability</div>
@@ -79,7 +105,15 @@ export default function DetailPanel({ parcel }) {
         </div>
       </div>
 
-      {/* Body */}
+      {/* ── AI Reason ── */}
+      {parcel.reason && (
+        <div className="detail-panel__reason">
+          <span className="detail-panel__reason-icon" aria-hidden="true">💡</span>
+          {parcel.reason}
+        </div>
+      )}
+
+      {/* ── Body ── */}
       <div className="detail-panel__body">
 
         {/* Land Details */}
@@ -100,14 +134,14 @@ export default function DetailPanel({ parcel }) {
                   : "—"}
               </span>
             </div>
-            <div className="detail-panel__data-row">
-              <span className="detail-panel__data-label">Power</span>
-              <span className="detail-panel__data-value">
-                {parcel.power_available
-                  ? parcel.power_available.replace(/_/g, " ")
-                  : "—"}
-              </span>
-            </div>
+            {parcel.price_per_acre_lakh != null && (
+              <div className="detail-panel__data-row">
+                <span className="detail-panel__data-label">Price / acre</span>
+                <span className="detail-panel__data-value">
+                  ₹{parcel.price_per_acre_lakh.toLocaleString("en-IN")} L
+                </span>
+              </div>
+            )}
           </div>
         </section>
 
@@ -117,18 +151,30 @@ export default function DetailPanel({ parcel }) {
             Proximity
           </div>
           <div className="detail-panel__data-rows">
-            <div className="detail-panel__data-row">
-              <span className="detail-panel__data-label">Highway</span>
-              <span className="detail-panel__data-value">
-                {formatDistance(parcel.distance_to_highway_km)}
-              </span>
-            </div>
-            <div className="detail-panel__data-row">
-              <span className="detail-panel__data-label">Airport</span>
-              <span className="detail-panel__data-value">
-                {formatDistance(parcel.distance_to_airport_km)}
-              </span>
-            </div>
+            {parcel.distance_to_highway_km != null && (
+              <div className="detail-panel__data-row">
+                <span className="detail-panel__data-label">Highway</span>
+                <span className="detail-panel__data-value">
+                  {formatDistance(parcel.distance_to_highway_km)}
+                </span>
+              </div>
+            )}
+            {parcel.dist_power_km != null && (
+              <div className="detail-panel__data-row">
+                <span className="detail-panel__data-label">Power substation</span>
+                <span className="detail-panel__data-value">
+                  {formatDistance(parcel.dist_power_km)}
+                </span>
+              </div>
+            )}
+            {parcel.distance_to_airport_km != null && (
+              <div className="detail-panel__data-row">
+                <span className="detail-panel__data-label">Airport</span>
+                <span className="detail-panel__data-value">
+                  {formatDistance(parcel.distance_to_airport_km)}
+                </span>
+              </div>
+            )}
           </div>
         </section>
 
@@ -148,7 +194,7 @@ export default function DetailPanel({ parcel }) {
                     : "var(--status-high-text)",
                 }}
               >
-                {parcel.flood_risk ? "Yes" : "None"}
+                {parcel.flood_risk ? "⚠ Yes" : "✓ None"}
               </span>
             </div>
             <div className="detail-panel__data-row">
@@ -161,35 +207,51 @@ export default function DetailPanel({ parcel }) {
                     : "var(--status-high-text)",
                 }}
               >
-                {parcel.litigation_flag ? "Active" : "Clear"}
+                {parcel.litigation_flag ? "⚠ Active" : "✓ Clear"}
               </span>
             </div>
           </div>
         </section>
 
+        {/* Red Flags */}
+        {hasRedFlags && (
+          <section aria-labelledby="detail-redflags-title">
+            <div id="detail-redflags-title" className="detail-panel__section-title">
+              ⚠ Red Flags
+            </div>
+            <ul className="detail-panel__redflags">
+              {redFlags.map((flag, i) => (
+                <li key={i} className="detail-panel__redflag">
+                  {flag}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {/* Score Breakdown */}
-        {breakdownItems.length > 0 && (
+        {breakdown.length > 0 && (
           <section aria-labelledby="detail-breakdown-title">
             <div id="detail-breakdown-title" className="detail-panel__section-title">
               Score Breakdown
             </div>
             <div className="detail-panel__breakdown">
-              {breakdownItems.map((item) => (
-                <div key={item.key} className="detail-panel__breakdown-item">
-                  <div className="detail-panel__breakdown-header">
-                    <span className="detail-panel__breakdown-label">{item.label}</span>
-                    <span className="detail-panel__breakdown-value">{item.value}</span>
+              {breakdown.map((item) => {
+                const meta = FACTOR_META[item.factor] ?? { label: item.factor, icon: "📊" };
+                return (
+                  <div key={item.factor} className="detail-panel__breakdown-item">
+                    <div className="detail-panel__breakdown-header">
+                      <span className="detail-panel__breakdown-label">
+                        {meta.icon} {meta.label}
+                      </span>
+                      <span className="detail-panel__breakdown-value">
+                        {item.points?.toFixed(1)} pts
+                      </span>
+                    </div>
+                    <ScoreBar points={item.points} maxPoints={maxPoints} />
                   </div>
-                  <div className="detail-panel__breakdown-bar-track">
-                    <div
-                      className="detail-panel__breakdown-bar-fill"
-                      style={{
-                        width: `${Math.max(0, (item.value / maxBreakdownValue) * 100)}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         )}
@@ -209,11 +271,6 @@ export default function DetailPanel({ parcel }) {
             </div>
           </section>
         )}
-
-        {/* Souradeep integration note */}
-        <div className="detail-panel__stub-note" aria-hidden="true">
-          ⚑ Souradeep: Replace this file with the full dossier panel. All parcel data is available via the <code>parcel</code> prop.
-        </div>
 
       </div>
     </aside>
