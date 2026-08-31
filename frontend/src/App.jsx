@@ -126,6 +126,7 @@ export default function App() {
         <DetailPanel
           parcel={selectedParcel}
           queryUnderstood={queryUnderstood}
+          onClose={() => setSelectedParcel(null)}
         />
       </main>
 
