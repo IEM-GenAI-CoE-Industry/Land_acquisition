@@ -4,24 +4,26 @@ Exposes a router with:
     GET  /parcels      -> raw mock dataset
     POST /get-parcels  -> filter + score (THE contract endpoint)
     POST /search       -> convenience: plain English -> parser -> filter+score
+
+NOTE: /search used to call the standalone parser service over the network
+(https://land-parser-6z60.onrender.com). That meant TWO separate free-tier
+Render services both had to be awake at the same moment for /search to work —
+if the standalone parser happened to be asleep, this endpoint failed with a
+502 even though the combined backend itself was healthy.
+
+Fix: parser.py's logic already lives in this same app, so we call it directly
+in-process instead of making an outbound HTTP call. No network hop, no
+dependency on another service's sleep state.
 """
 
-import os
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from parcels import PARCELS
 from scoring import filter_and_score
+import parser as parser_module  # in-process parser — see note above
 
 router = APIRouter()
-
-# Subham's live parser. In the combined backend this still calls the public
-# Render URL by default (works fine) — override with PARSER_URL if it ever moves.
-PARSER_URL = os.getenv(
-    "PARSER_URL",
-    "https://land-parser-6z60.onrender.com/parse-query",
-)
 
 
 class SearchBody(BaseModel):
@@ -60,32 +62,45 @@ def get_parcels(parsed_query: dict,
 def search(body: SearchBody):
     """
     Convenience one-shot: plain English -> parser -> filter -> scored parcels.
-    Note: first call may take ~50s if the parser (Render free tier) is asleep.
+    Calls the parser function directly (in-process) — no external HTTP call,
+    so this no longer depends on the standalone parser service being awake.
     """
     try:
-        with httpx.Client(timeout=60) as client:
-            resp = client.post(PARSER_URL, json={"query": body.query})
-            resp.raise_for_status()
-            parsed = resp.json()
-    except httpx.HTTPError as e:
-        raise HTTPException(502, f"Parser call failed: {e}")
+        parsed_data = parser_module.call_llm(body.query)
+        parsed_data.setdefault("raw_query", body.query)
+        parsed = {"success": True, "data": parsed_data}
+    except Exception as e:
+        parsed = {
+            "success": False,
+            "error": str(e),
+            "data": {
+                "area_acres": None,
+                "use_case": None,
+                "proximity": None,
+                "power_requirement": None,
+                "flood_risk_tolerance": None,
+                "raw_query": body.query,
+            },
+        }
 
+    # filter_and_score expects the parser's raw output shape; unwrap the same
+    # way normalize_query does, but pass the whole envelope through — scoring.py
+    # already knows how to dig into {"success":..., "data": {...}}.
     result = filter_and_score(PARCELS, parsed, drop_undersized=True)
     result["parser_output"] = parsed  # surface what the parser returned
 
-    # If Subham's parser reported a failure or extracted nothing usable, say so
+    # If the parser reported a failure or extracted nothing usable, say so
     # loudly instead of returning all parcels as if the search worked.
     q = result["query_understood"]
-    parser_failed = isinstance(parsed, dict) and parsed.get("success") is False
+    parser_failed = parsed.get("success") is False
     extracted_nothing = (q["area_acres"] is None and q["use_case"] == "general"
                           and q["proximity"] is None and not q["wants_power"])
 
     if parser_failed or extracted_nothing:
         result["warning"] = (
             "Parser returned no usable criteria (success=false or all fields "
-            "null), so results are UNFILTERED. This is an issue in Subham's "
-            "parser, not the filter engine. Error from parser: "
-            + str(parsed.get("error") if isinstance(parsed, dict) else "unknown")
+            "null), so results are UNFILTERED. Error from parser: "
+            + str(parsed.get("error", "unknown"))
         )
 
     return result
